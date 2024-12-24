@@ -6,8 +6,7 @@ namespace ETLApp.Data.Models
 
         public DateTime DropoffDateTime { get; set; }
 
-        //TODO: Can be nullable
-        public int? PassengerCount { get; set; }
+        public int PassengerCount { get; set; }
 
         public decimal TripDistance { get; set; }
 
