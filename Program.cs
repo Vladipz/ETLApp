@@ -1,4 +1,6 @@
-﻿using ETLApp.Data;
+﻿using System.Globalization;
+
+using ETLApp.Data;
 using ETLApp.Data.Models;
 using ETLApp.Services.ExtractService;
 using ETLApp.Services.LoadService;
@@ -6,84 +8,107 @@ using ETLApp.Services.TransformService;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
-internal class Program
+namespace ETLApp
 {
-    private static void Main(string[] args)
+    internal class Program
     {
-        // Configuration setup
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(Directory.GetCurrentDirectory())
-            .AddJsonFile("appsettings.json")
-            .Build();
+        private static IServiceProvider _serviceProvider;
+        private static IConfiguration _configuration;
+        private static ILogger<Program> _logger;
 
-        // Dependency injection
-        var serviceProvider = new ServiceCollection()
-            .AddSingleton(configuration)
-            .AddTransient<CsvExtractor>()
-            .AddTransient<DataTransformer>()
-            .AddTransient(
-                provider => new SqlLoader(configuration))
-            .AddTransient(
-                provider => new DatabaseInitializer(configuration))
-            .BuildServiceProvider();
-
-        // ExtractService
-        var csvExtractor = serviceProvider.GetRequiredService<CsvExtractor>();
-        var dataTransformer = serviceProvider.GetRequiredService<DataTransformer>();
-        var sqlLoader = serviceProvider.GetRequiredService<SqlLoader>();
-
-        // Database initialization
-        Console.WriteLine("Initializing database...");
-        var databaseInitializer = serviceProvider.GetRequiredService<DatabaseInitializer>();
-        databaseInitializer.Initialize();
-        Console.WriteLine("Database initialized successfully.");
-
-        // Path to CSV file
-        var filePath = configuration["CSV:FilePath"];
-
-        try
+        private static void Main(string[] args)
         {
-            Console.WriteLine("Extracting data from CSV file...");
+            SetupDependencies();
+
+            try
+            {
+                InitializeDatabase();
+                RunEtlProcess();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "ETL process failed");
+                throw;
+            }
+        }
+
+        private static void SetupDependencies()
+        {
+            _configuration = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json")
+                .Build();
+
+            _serviceProvider = new ServiceCollection()
+                .Configure<DatabaseSettings>(_configuration.GetSection("Database"))
+                .Configure<ScriptSettings>(_configuration.GetSection("Scripts"))
+                .AddSingleton(_configuration)
+                .AddLogging(builder =>
+                {
+                    builder.AddConfiguration(_configuration.GetSection("Logging"));
+                    builder.AddConsole();
+                })
+                .AddTransient<CsvExtractor>()
+                .AddTransient<DataTransformer>()
+                .AddTransient<DatabaseInitializer>()
+                .AddTransient<SqlLoader>()
+                .BuildServiceProvider();
+
+            _logger = _serviceProvider.GetRequiredService<ILogger<Program>>();
+        }
+
+        private static void InitializeDatabase()
+        {
+            _logger.LogInformation("Initializing database...");
+            var databaseInitializer = _serviceProvider.GetRequiredService<DatabaseInitializer>();
+            databaseInitializer.Initialize();
+            _logger.LogInformation("Database initialized successfully.");
+        }
+
+        private static void RunEtlProcess()
+        {
+            var csvExtractor = _serviceProvider.GetRequiredService<CsvExtractor>();
+            var dataTransformer = _serviceProvider.GetRequiredService<DataTransformer>();
+            var sqlLoader = _serviceProvider.GetRequiredService<SqlLoader>();
+
+            var filePath = _configuration["CSV:FilePath"];
+
+            _logger.LogInformation("Extracting data from CSV file...");
             var records = csvExtractor.Extract(filePath);
-            Console.WriteLine("Data extracted successfully.");
+            _logger.LogInformation("Data extracted successfully.");
 
-            Console.WriteLine("Transforming data...");
+            _logger.LogInformation("Transforming data...");
             var transformedRecords = dataTransformer.Transform(records);
-            Console.WriteLine("Data transformed successfully.");
+            _logger.LogInformation("Data transformed successfully.");
 
-            Console.WriteLine("Removing duplicates...");
+            _logger.LogInformation("Removing duplicates...");
             var duplicates = new List<EtlRecord>();
             var finalRecords = dataTransformer.RemoveDuplicates(transformedRecords, out duplicates);
-            Console.WriteLine($"Removed {duplicates.Count} duplicates.");
+            _logger.LogInformation("Removed {DuplicateCount} duplicates.", duplicates.Count);
 
-            Console.WriteLine("Loading data to SQL Server...");
+            _logger.LogInformation("Loading data to SQL Server...");
             sqlLoader.Load(finalRecords, "ProcessedTrips");
-            Console.WriteLine("Data loaded successfully.");
+            _logger.LogInformation("Data loaded successfully.");
 
-            Console.WriteLine("Writing duplicates to CSV file...");
+            _logger.LogInformation("Writing duplicates to CSV file...");
             WriteDuplicatesToFile(duplicates);
 
-            Console.WriteLine("ETL process completed successfully.");
+            _logger.LogInformation("ETL process completed successfully.");
         }
-        catch (Exception ex)
+
+        private static void WriteDuplicatesToFile(List<EtlRecord> duplicates)
         {
-            Console.WriteLine($"ETL process failed: {ex.Message}");
-            throw;
+            var duplicatesFilePath = "duplicates.csv";
+
+            using (var writer = new StreamWriter(duplicatesFilePath))
+            using (var csv = new CsvHelper.CsvWriter(writer, CultureInfo.InvariantCulture))
+            {
+                csv.WriteRecords(duplicates);
+            }
+
+            _logger.LogInformation("Duplicates written to {FilePath}.", duplicatesFilePath);
         }
-    }
-
-    // Метод для запису дублікованих записів у файл
-    private static void WriteDuplicatesToFile(List<EtlRecord> duplicates)
-    {
-        var duplicatesFilePath = "duplicates.csv";
-
-        using (var writer = new StreamWriter(duplicatesFilePath))
-        using (var csv = new CsvHelper.CsvWriter(writer, System.Globalization.CultureInfo.InvariantCulture))
-        {
-            csv.WriteRecords(duplicates);
-        }
-
-        Console.WriteLine($"Duplicates written to {duplicatesFilePath}.");
     }
 }
