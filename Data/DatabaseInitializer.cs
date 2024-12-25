@@ -1,31 +1,37 @@
+using ETLApp.Data.Models;
+
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace ETLApp.Data
 {
     public class DatabaseInitializer
     {
-        private readonly IConfiguration _configuration;
+        private DatabaseSettings _databaseSettings;
+        private ScriptSettings _scriptSettings;
 
-        public DatabaseInitializer(IConfiguration configuration)
+        public DatabaseInitializer(
+            IOptions<DatabaseSettings> databaseSettings,
+            IOptions<ScriptSettings> scriptSettings)
         {
-            _configuration = configuration;
+            _databaseSettings = databaseSettings.Value;
+            _scriptSettings = scriptSettings.Value;
         }
 
         public void Initialize()
         {
-            string masterConnectionString = _configuration["Database:MasterConnectionString"];
-            string databaseName = _configuration["Database:Name"];
+            string masterConnectionString = _databaseSettings.MasterConnectionString;
+            string databaseName = _databaseSettings.Name;
 
             // Create database if not exists
             CreateDatabaseIfNotExists(masterConnectionString, databaseName);
 
             // Now use a connection string for the specific database
-            string databaseConnectionString = _configuration["Database:ConnectionString"]
-                .Replace("{DatabaseName}", databaseName);
+            string databaseConnectionString = _databaseSettings.ConnectionString.Replace("{DatabaseName}", databaseName);
 
-            string createTableScript = File.ReadAllText(_configuration["Scripts:CreateTable"]);
-            string addIndexesScript = File.ReadAllText(_configuration["Scripts:AddIndexes"]);
+            string createTableScript = File.ReadAllText(_scriptSettings.CreateTable);
+            string addIndexesScript = File.ReadAllText(_scriptSettings.AddIndexes);
 
             using (var connection = new SqlConnection(databaseConnectionString))
             {

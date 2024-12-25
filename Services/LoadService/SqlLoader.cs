@@ -3,24 +3,22 @@ using System.Data;
 using ETLApp.Data.Models;
 
 using Microsoft.Data.SqlClient;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace ETLApp.Services.LoadService
 {
     public class SqlLoader
     {
-        private readonly IConfiguration _configuration;
+        private readonly DatabaseSettings _dbSettings;
 
-        public SqlLoader(IConfiguration configuration)
+        public SqlLoader(IOptions<DatabaseSettings> dbSettings)
         {
-            _configuration = configuration;
+            _dbSettings = dbSettings.Value;
         }
 
         public void Load(IEnumerable<EtlRecord> records, string tableName)
         {
-            string databaseName = _configuration["Database:Name"];
-            string connectionString = _configuration["Database:ConnectionString"]
-                .Replace("{DatabaseName}", databaseName);
+            string connectionString = _dbSettings.ConnectionString.Replace("{DatabaseName}", _dbSettings.Name, StringComparison.InvariantCulture);
 
             using (var connection = new SqlConnection(connectionString))
             {
@@ -42,15 +40,16 @@ namespace ETLApp.Services.LoadService
                     bulkCopy.ColumnMappings.Add("TipAmount", "tip_amount");
 
                     // Load data
-                    var dataTable = ToDataTable(records);
-                    bulkCopy.WriteToServer(dataTable);
+                    using (var dataTable = ToDataTable(records))
+                    {
+                        bulkCopy.WriteToServer(dataTable);
+                    }
                 }
             }
         }
 
         private DataTable ToDataTable(IEnumerable<EtlRecord> records)
         {
-            // Create a new DataTable
             var dataTable = new DataTable();
 
             // Add columns to the DataTable based on the properties of EtlRecord
